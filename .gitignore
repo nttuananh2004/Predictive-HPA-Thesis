@@ -14,3 +14,6 @@ __pycache__/
 # IDEs
 .vscode/
 .idea/
+
+# Kubernetes Manifests (Ignore local deployment with production keys)
+k8s/deployment.yaml

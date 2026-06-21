@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictive-hpa-app
+  labels:
+    app: predictive-hpa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: predictive-hpa
+  template:
+    metadata:
+      labels:
+        app: predictive-hpa
+    spec:
+      containers:
+      - name: predictive-hpa-app
+        # Latest image digest from Artifact Registry
+        image: us-central1-docker.pkg.dev/predictive-hpa-thesis/predictive-repo/predictive-hpa@sha256:20c901c573592f932bf1e54a51cdba88a3c235e7e4bb9e3088d905306f171283
+        # Always pull to ensure the newest build is deployed
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        # Enable unbuffered logging for real-time troubleshooting
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        # Force CPU usage to avoid GPU compatibility issues
+        - name: CUDA_VISIBLE_DEVICES
+          value: "-1"
+        # Datadog API credentials for external metrics transmission
+        - name: DD_API_KEY
+          value: "your_datadog_API_key"
+        - name: DD_APP_KEY
+          value: "your_datadog_APP_key"
+        - name: DD_SITE
+          value: "us5.datadoghq.com"
+        # Resource constraints to prevent OOM/CPU throttling
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "250m"
+            memory: "256Mi"

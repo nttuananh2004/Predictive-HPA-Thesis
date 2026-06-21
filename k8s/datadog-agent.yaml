@@ -1,0 +1,117 @@
+---
+# 1. Service: Expose Cluster Agent metrics API for HPA
+apiVersion: v1
+kind: Service
+metadata:
+  name: datadog-cluster-agent
+  namespace: default
+  labels:
+    app: datadog-cluster-agent
+spec:
+  ports:
+  - port: 443            
+    targetPort: 8443    
+    name: metricsapi
+    protocol: TCP
+  - port: 5005
+    name: agentport
+    protocol: TCP
+  selector:
+    app: datadog-cluster-agent
+
+---
+# 2. Deployment: Datadog Cluster Agent (External Metrics Provider)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datadog-cluster-agent
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: datadog-cluster-agent
+  template:
+    metadata:
+      labels:
+        app: datadog-cluster-agent
+    spec:
+      serviceAccountName: datadog-cluster-agent # Requires RBAC auth-delegator
+      containers:
+      - name: cluster-agent
+        image: public.ecr.aws/datadog/cluster-agent:7.80.1
+        env:
+        - name: DD_API_KEY
+          value: "9c392a60f758c2f76badd80fba60ca26"
+        - name: DD_APP_KEY
+          value: "ddapp_tkOoZnDcL0tynyenEbdhbdIWCZab3FGrfo" # Required for pulling metrics from Datadog Cloud
+        - name: DD_SITE
+          value: "us5.datadoghq.com"
+        - name: DD_CLUSTER_AGENT_AUTH_TOKEN
+          value: "a_random_32_character_long_token"
+        - name: DD_EXTERNAL_METRICS_PROVIDER_ENABLED
+          value: "true"
+        - name: DD_EXTERNAL_METRICS_PROVIDER_PORT
+          value: "8443"
+        - name: DD_LEADER_ELECTION
+          value: "true"
+
+---
+# 3. DaemonSet: Datadog Node Agent (Collects Pod/Node Telemetry)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: datadog-agent
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: datadog-agent
+  template:
+    metadata:
+      labels:
+        app: datadog-agent
+    spec:
+      serviceAccountName: datadog-agent
+      containers:
+      - name: agent
+        image: public.ecr.aws/datadog/agent:7.80.1
+        env:
+        - name: DD_API_KEY
+          value: "9c392a60f758c2f76badd80fba60ca26"
+        - name: DD_SITE
+          value: "us5.datadoghq.com"
+        - name: DD_CLUSTER_AGENT_ENABLED
+          value: "true" # Route requests via Cluster Agent
+        - name: DD_CLUSTER_AGENT_AUTH_TOKEN
+          value: "a_random_32_character_long_token" # Match with Cluster Agent token
+        - name: DD_KUBERNETES_KUBELET_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: DD_KUBERNETES_KUBELET_PODRESOURCES_SOCKET
+          value: "/var/lib/kubelet/pod-resources/kubelet.sock"
+        - name: DD_KUBERNETES_COLLECT_METADATA_IGNORE_MISSING_API_SOCKET
+          value: "true"
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: procdir
+          mountPath: /host/proc
+          readOnly: true
+        - name: cgroups
+          mountPath: /host/sys/fs/cgroup
+          readOnly: true
+        - name: dockersocket
+          mountPath: /var/run/docker.sock
+          readOnly: true
+      volumes:
+      - name: procdir
+        hostPath:
+          path: /proc
+      - name: cgroups
+        hostPath:
+          path: /sys/fs/cgroup
+      - name: dockersocket
+        hostPath:
+          path: /var/run/docker.sock

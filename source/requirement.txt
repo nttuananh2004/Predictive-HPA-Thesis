@@ -1,0 +1,8 @@
+tensorflow
+scikit-learn
+joblib
+datadog-api-client
+numpy
+fastapi
+uvicorn
+python-dotenv

@@ -1,0 +1,21 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-predictive
+  annotations:
+    autoscaling.datadoghq.com/metrics: '[{"metric_name": "k8s.app.predicted_traffic", "query": "avg:k8s.app.predicted_traffic{kube_deployment:nginx-web}", "expression": "avg:k8s.app.predicted_traffic{kube_deployment:nginx-web}"}]'
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-web
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: k8s.app.predicted_traffic
+      target:
+        type: AverageValue
+        averageValue: 30

@@ -1,0 +1,132 @@
+# 1. ServiceAccount: Node Agent
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: datadog-agent
+  namespace: default
+
+---
+# 2. ServiceAccount: Cluster Agent
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: datadog-cluster-agent
+  namespace: default
+
+---
+# 3. ClusterRole: Node Agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: datadog-agent
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "events", "services", "endpoints", "pods", "namespaces", "nodes/spec", "nodes/proxy", "nodes/metrics", "nodes/stats"]
+  verbs: ["get", "list", "watch"]
+
+---
+# 4. ClusterRole: Cluster Agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: datadog-cluster-agent
+rules:
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["policy"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["custom.metrics.k8s.io", "external.metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+---
+# 5. ClusterRoleBinding: Node Agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: datadog-agent
+subjects:
+- kind: ServiceAccount
+  name: datadog-agent
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: datadog-agent
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 6. ClusterRoleBinding: Cluster Agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: datadog-cluster-agent
+subjects:
+- kind: ServiceAccount
+  name: datadog-cluster-agent
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: datadog-cluster-agent
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 7. ClusterRoleBinding: Auth Delegation
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: datadog-cluster-agent-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: datadog-cluster-agent
+  namespace: default
+
+---
+# 8. RoleBinding: Auth Reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: datadog-cluster-agent-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+- kind: ServiceAccount
+  name: datadog-cluster-agent
+  namespace: default

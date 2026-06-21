@@ -1,0 +1,40 @@
+# --- Environment & Secrets ---
+.env
+.venv/
+venv/
+env/
+*.pem
+*.key
+
+# --- Cache & Build Artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.tox/
+
+# --- Terraform & Infra ---
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+
+# --- Version Control ---
+.git/
+.gitignore
+
+# --- Storage & Logs ---
+*.log
+*.tmp
+*.bak
+*.sqlite
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Project Specific ---
+
+k8s/
+Infrastructure/

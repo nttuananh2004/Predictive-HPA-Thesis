@@ -42,9 +42,9 @@ spec:
         image: public.ecr.aws/datadog/cluster-agent:7.80.1
         env:
         - name: DD_API_KEY
-          value: "9c392a60f758c2f76badd80fba60ca26"
+          value: ""
         - name: DD_APP_KEY
-          value: "ddapp_tkOoZnDcL0tynyenEbdhbdIWCZab3FGrfo" # Required for pulling metrics from Datadog Cloud
+          value: "" # Required for pulling metrics from Datadog Cloud
         - name: DD_SITE
           value: "us5.datadoghq.com"
         - name: DD_CLUSTER_AGENT_AUTH_TOKEN

@@ -28,9 +28,8 @@ The inference service reads the recent CPU window, predicts the next value, appl
 | `source/` | Inference microservice |
 | `training_predictive.ipynb` | Offline LSTM training notebook |
 | `Dockerfile` | Image for the inference service |
-| `loadtest_default.js` | k6 reactive baseline (five-phase pyramid) |
-| `loadtest-predictive.js` | k6 predictive run |
-| `sine_wave.js` | k6 periodic workload |
+| `loadtest_sample.js` | k6 five-phase flash-sale workload (used for both runs) |
+| `sine_wave.js` | k6 periodic/seasonal workload |
 
 ## Prerequisites
 
@@ -96,12 +95,11 @@ kubectl get hpa
 
 ## Load tests
 
-Run each scenario against the nginx-web endpoint:
+The reactive baseline and the predictive run use the same workload; only the metric the HPA reads differs (native CPU vs. the forecast). Run against the nginx-web endpoint:
 
 ```bash
-k6 run loadtest_default.js      # reactive baseline
-k6 run loadtest-predictive.js   # predictive HPA
-k6 run sine_wave.js             # periodic workload
+k6 run loadtest_sample.js   # five-phase flash-sale workload
+k6 run sine_wave.js         # periodic workload
 ```
 
 Client-side percentiles come from k6; server-side CPU, replica counts, and scaling events come from the Datadog dashboards.

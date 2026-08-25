@@ -1,128 +1,52 @@
 # Kubernetes-Native Predictive Autoscaling
 
-An LSTM-based predictive Horizontal Pod Autoscaler (HPA) for Kubernetes. It forecasts near-term traffic and feeds the forecast to the native HPA through the standard External Metrics API, so the cluster scales ahead of demand instead of after a CPU threshold is crossed.
+An LSTM-based predictive Horizontal Pod Autoscaler for Kubernetes. Instead of waiting for CPU to cross a threshold and then reacting, it forecasts the near-term load and hands that forecast to the native HPA through the standard External Metrics API, so the cluster scales while the trend is still building rather than after the spike has already landed.
 
-Time-series storage and heavy computation are offloaded to an external backend (Datadog); only a lightweight agent and an inference loop run in the cluster. The environment is provisioned with Terraform and evaluated on Google Kubernetes Engine (GKE) against the native reactive HPA using k6.
+## The idea
+
+Reactive autoscaling is always a step behind. By the time CPU crosses its target and new Pods get scheduled, pulled, and started, the burst has already cost you tail latency. The premise here is to scale on a prediction of demand instead of on a metric that has already moved.
+
+A small recurrent model reads the recent CPU history, predicts the next value, and publishes it as a custom metric that the HPA consumes directly. The application does not change and the HPA is not replaced; it simply reads a leading metric instead of a lagging one, and the usual HPA behaviour (rate limiting, gradual convergence, the scale-down window) stays in place. If the forecast ever goes stale, the HPA falls back to its CPU target, so the predictive path only ever adds to a working reactive baseline.
+
+## Design
+
+The main constraint driving the design is that monitoring a system under heavy load costs resources and can disturb the very thing you are trying to measure. So observability is kept off the cluster: time-series storage and the heavy computation live in an external backend (Datadog), and only a lightweight agent and a small inference loop run on the workers. Worker-node memory and disk stay with the application.
+
+Everything is wired through standard, CNCF-conformant interfaces: the External Metrics API, an APIService for aggregation, a DaemonSet for the agent, and the v2 HPA. Because there is no provider-specific coupling on the scaling path, portability is a property of the design rather than of any one cloud. It is evaluated here on GKE; the one vendor-specific piece, the Datadog backend, sits behind the same external-metrics contract and could be swapped for another time-series store without touching anything inside the cluster.
+
+The whole environment is defined as code, so a run can be rebuilt from scratch rather than hand-tuned.
+
+## How the pieces fit
+
+At runtime the flow is a loop. A node agent streams CPU to the external time-series database. The LSTM inference Pod reads the recent window, predicts the next value, applies a small safety buffer, and writes the forecast back. A cluster agent exposes that forecast through the External Metrics API as `k8s.app.predicted_traffic`. The native HPA reads it and scales the `nginx-web` Deployment ahead of demand.
+
+Setup is code and the parts are decoupled, so the order is flexible. Terraform stands up the GKE cluster and a custom node pool. A set of Kubernetes manifests bring up the Datadog agents, the RBAC, the External Metrics provider, the application, and the predictive HPA. The LSTM is trained offline, at whatever point is convenient, into two artifacts (the network weights and the fitted scaler); those are baked into the inference image, which is pushed to a registry and consumed in the cluster. None of these steps depends on a strict sequence beyond the cluster existing before things are deployed onto it.
+
+## Repository layout
+
+- `Infrastructure/` — Terraform for the GKE cluster and custom node pool
+- `k8s/` — manifests: Datadog agents, RBAC, the External Metrics APIService, the app Deployment, and the predictive HPA
+- `model/` — the trained LSTM weights and the fitted scaler
+- `source/` — the inference microservice
+- `training_predictive.ipynb` — offline LSTM training
+- `Dockerfile` — image for the inference service
+- `loadtest_sample.js` — k6 five-phase flash-sale workload (used for both runs)
+- `sine_wave.js` — k6 periodic workload
+
+## The model
+
+Trained offline from CPU telemetry. The series is min-max scaled, cut into ten-observation windows that predict the eleventh, and fed to a single 64-unit LSTM layer with a dense output (Adam, mean-squared error, 100 epochs). Training writes the weights and the scaler into `model/`; inference itself does no training. Scaling to `[0, 1]` is what keeps training stable, and the scaler is saved so the same transform can be inverted at serving time.
+
+## Evaluation
+
+The predictive controller is compared against the native reactive HPA on GKE under an identical five-phase flash-sale workload from k6, about 492,000 requests per run. Only the metric the HPA reads differs: native CPU for the baseline, the forecast for the predictive run. Everything else (cluster, machine type, replica bounds, load profile) is held fixed, and the two runs go back to back on the same cluster. Client-side percentiles come from k6; server-side CPU, replica counts, and scaling events come from Datadog.
+
+On the reported run, median, P90, and P95 request duration dropped by 15.31%, 12.68%, and 11.60% respectively, with zero HTTP failures on both configurations. The cost is a handful of cold-start outliers during aggressive scale-up and roughly a quarter more average replica provisioning: the buffer showing up as spend. The full analysis, including the trade-offs, is in the paper.
 
 Demo video: https://drive.google.com/file/d/1i5NvWGNc_1vW-w48huaFgqTBP4bhe20M/view?usp=sharing
 
-## Architecture
-
-```
-Terraform            -> GKE cluster + node pool
-Node agent           -> streams CPU to Datadog (external TSDB)
-LSTM inference Pod    -> reads history, writes forecast to Datadog
-Cluster agent         -> exposes forecast via External Metrics API
-native HPA            -> reads forecast, scales nginx-web
-```
-
-The inference service reads the recent CPU window, predicts the next value, applies a safety buffer, and publishes it as the custom metric `k8s.app.predicted_traffic`. The cluster agent registers as the `external.metrics.k8s.io` provider so the HPA can consume it.
-
-## Repository structure
-
-| Path | Description |
-| --- | --- |
-| `Infrastructure/` | Terraform for the GKE cluster and custom node pool |
-| `k8s/` | Manifests: Datadog agents, RBAC, External Metrics APIService, app Deployment, predictive HPA |
-| `model/` | Trained LSTM weights and fitted scaler |
-| `source/` | Inference microservice |
-| `training_predictive.ipynb` | Offline LSTM training notebook |
-| `Dockerfile` | Image for the inference service |
-| `loadtest_sample.js` | k6 five-phase flash-sale workload (used for both runs) |
-| `sine_wave.js` | k6 periodic/seasonal workload |
-
-## Prerequisites
-
-- GCP project with the Kubernetes Engine API enabled, `gcloud` authenticated
-- Terraform and `kubectl`
-- Docker and a container registry (e.g. Google Artifact Registry)
-- Datadog account with an API key and an Application key
-- k6, and Python 3.10+ (TensorFlow, scikit-learn) to retrain the model
-
-## Setup
-
-Provision the cluster:
-
-```bash
-cd Infrastructure
-terraform init
-terraform apply
-gcloud container clusters get-credentials predictive-hpa-cluster --zone us-central1-a
-```
-
-Create the Datadog secret (keys are not committed to the repo):
-
-```bash
-kubectl create secret generic datadog-secret \
-  --from-literal=api-key=<DATADOG_API_KEY> \
-  --from-literal=app-key=<DATADOG_APP_KEY>
-```
-
-The manifest reads it via `secretKeyRef`:
-
-```yaml
-- name: DD_API_KEY
-  valueFrom:
-    secretKeyRef:
-      name: datadog-secret
-      key: api-key
-- name: DD_APP_KEY
-  valueFrom:
-    secretKeyRef:
-      name: datadog-secret
-      key: app-key
-```
-
-Deploy the stack and app:
-
-```bash
-kubectl apply -f k8s/
-```
-
-Build and push the inference image, then update the image reference in the Deployment and re-apply:
-
-```bash
-docker build -t <REGISTRY>/predictive-inference:latest .
-docker push <REGISTRY>/predictive-inference:latest
-```
-
-Verify the external metric:
-
-```bash
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq .
-kubectl get hpa
-```
-
-## Load tests
-
-The reactive baseline and the predictive run use the same workload; only the metric the HPA reads differs (native CPU vs. the forecast). Run against the nginx-web endpoint:
-
-```bash
-k6 run loadtest_sample.js   # five-phase flash-sale workload
-k6 run sine_wave.js         # periodic workload
-```
-
-Client-side percentiles come from k6; server-side CPU, replica counts, and scaling events come from the Datadog dashboards.
-
-## Retraining
-
-Run `training_predictive.ipynb` end to end. It min-max scales the CPU telemetry, builds ten-observation supervised windows, trains a single 64-unit LSTM layer (Adam, MSE, 100 epochs), and exports the weights and scaler into `model/`.
-
-## Results
-
-Identical five-phase flash-sale workload, about 492,000 requests per run, zero HTTP failures on both:
-
-| Metric | Reactive | Predictive | Delta |
-| --- | --- | --- | --- |
-| Median (P50) | 45.21 ms | 38.29 ms | -15.31% |
-| P90 | 71.15 ms | 62.13 ms | -12.68% |
-| P95 | 80.72 ms | 71.36 ms | -11.60% |
-| HTTP failures | 0 | 0 | - |
-
-Trade-off: a few cold-start outliers during aggressive scale-up and higher average replica provisioning. Full analysis is in the paper.
-
 ## Notes
 
-- Datadog keys are provided via a Kubernetes Secret, not committed to the repo.
+- Datadog API and application keys are supplied through a Kubernetes Secret and are not committed to the repository.
 - `terraform.tfstate` and credential files are excluded via `.gitignore`.
-- Worker nodes are Spot VMs; the node pool autoscales between 1 and 3 nodes.
+- Worker nodes are Spot VMs; the node pool autoscales between one and three nodes. Spot reclamation also doubles as a small, free test of self-healing.
